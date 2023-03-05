@@ -1,0 +1,17 @@
+{
+  "name": "calculate-commission",
+  "version": "1.0.0",
+  "description": "",
+  "main": ".test.js",
+  "scripts": {
+    "test": "jest"
+  },
+  "author": "Arzoyan Ruben",
+  "license": "ISC",
+  "devDependencies": {
+    "jest": "^29.4.3"
+  },
+  "dependencies": {
+    "node-fetch": "^2.6.9"
+  }
+}
