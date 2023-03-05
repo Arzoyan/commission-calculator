@@ -3,7 +3,6 @@ const app = require("./calculateCommissions");
 describe("myApp", () => {
   test("calculate Commissions fee ", async () => {
     let result = await app.calculateCommissions("input.json");
-    console.log("result", result);
     expect(result).toStrictEqual([
       "0.06",
       "0.90",
