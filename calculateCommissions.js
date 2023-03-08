@@ -38,7 +38,7 @@ const calculateCommissions = async (fileName) => {
   // amount commission fee for cash in
   const cashInFeeMax = cashIn.max.amount;
   // amount commission fee for cash out
-  const casOutNaturalWeekly_Limit = cashOutNatural.week_limit.amount;
+  const casOutNaturalWeeklyLimit = cashOutNatural.week_limit.amount;
 
   // amount commission fee for cash out for
   const cashOutNaturalFeeRate =
@@ -49,7 +49,7 @@ const calculateCommissions = async (fileName) => {
     return calculateUserCommission(item, users, {
       cashInFeeRate,
       cashInFeeMax,
-      casOutNaturalWeekly_Limit,
+      casOutNaturalWeeklyLimit,
       cashOutNaturalFeeRate,
       cashOutLegalFeeRate,
       cashOutLegalFeeMin,
@@ -77,7 +77,7 @@ const calculateUserCommission = (
   {
     cashInFeeRate,
     cashInFeeMax,
-    casOutNaturalWeekly_Limit,
+    casOutNaturalWeeklyLimit,
     cashOutNaturalFeeRate,
     cashOutLegalFeeRate,
     cashOutLegalFeeMin,
@@ -113,13 +113,13 @@ const calculateUserCommission = (
   } else {
     if (user_type === "natural") {
       // Calculate commission fee for natural person cash out operation
-      if (amount <= casOutNaturalWeekly_Limit - week_cash_out) {
+      if (amount <= casOutNaturalWeeklyLimit - week_cash_out) {
         // No commission fee for cash out amount within weekly limit
-        fee = 0.0;
+        fee = 0;
       } else {
         // Commission fee for cash out amount exceeding weekly limit
         fee = ceil(
-          (amount - (casOutNaturalWeekly_Limit - week_cash_out)) *
+          (amount - (casOutNaturalWeeklyLimit - week_cash_out)) *
             cashOutNaturalFeeRate,
           100
         );
