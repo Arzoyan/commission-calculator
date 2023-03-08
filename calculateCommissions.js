@@ -25,8 +25,7 @@ async function getData(fileName) {
 }
 const calculateCommissions = async (fileName) => {
   const data = await getData(fileName);
-  // Initialize variables for calculating commission fees for each user
-  const users = collectUserData(data);
+
   // get data for commission fee for cash in
   const cashIn = await API.getData(CONSTANTS.CASH_IN);
   // get data for commission fee for cash out for natural  type
@@ -45,35 +44,76 @@ const calculateCommissions = async (fileName) => {
     cashOutNatural.percents / CONSTANTS.PERCENT_NUMBER;
   const cashOutLegalFeeRate = cashOutLegal.percents / CONSTANTS.PERCENT_NUMBER;
   const cashOutLegalFeeMin = cashOutLegal.min.amount;
-  const result = data.map((item) => {
-    return calculateUserCommission(item, users, {
-      cashInFeeRate,
-      cashInFeeMax,
-      casOutNaturalWeeklyLimit,
-      cashOutNaturalFeeRate,
-      cashOutLegalFeeRate,
-      cashOutLegalFeeMin,
-    });
+
+  const result = calculateUserCommission(data, {
+    cashInFeeRate,
+    cashInFeeMax,
+    casOutNaturalWeeklyLimit,
+    cashOutNaturalFeeRate,
+    cashOutLegalFeeRate,
+    cashOutLegalFeeMin,
   });
+
   return result;
 };
 
-const collectUserData = (userData) => {
-  const users = {};
-  for (let item of userData) {
-    if (!(item["user_id"] in users)) {
-      users[item["user_id"]] = {
-        type: item["user_type"],
-        operations: [],
-      };
+// Cash In commission calculation
+function calculateCashInCommission({ amount, cashInFeeRate, cashInFeeMax }) {
+  const commission = amount * cashInFeeRate;
+  return roundUpToCents(
+    Math.min(commission, cashInFeeMax),
+    CONSTANTS.PERCENT_NUMBER
+  );
+}
+
+// Cash Out commission calculation for legal persons
+function calculateLegalPersonsCashOutCommission({
+  amount,
+  cashOutLegalFeeRate,
+  cashOutLegalFeeMin,
+}) {
+  const commission = amount * cashOutLegalFeeRate;
+  return roundUpToCents(
+    Math.max(commission, cashOutLegalFeeMin),
+    CONSTANTS.PERCENT_NUMBER
+  );
+}
+
+// Cash Out commission calculation for natural persons
+function calculateNaturalPersonsCashOutCommission({
+  amount,
+  totalCashOutThisWeek,
+  isLimitOver,
+  casOutNaturalWeeklyLimit,
+  cashOutNaturalFeeRate,
+}) {
+  let commission = 0;
+  if (
+    totalCashOutThisWeek + amount <= casOutNaturalWeeklyLimit &&
+    !isLimitOver
+  ) {
+    // Free of charge
+    return "0.00";
+  } else {
+    if (isLimitOver) {
+      commission = amount * cashOutNaturalFeeRate;
+    } else {
+      // casOutNaturalWeeklyLimit EUR per week (from monday to sunday) is free of charge.
+      const exceededAmount =
+        amount - (casOutNaturalWeeklyLimit - totalCashOutThisWeek);
+
+      if (exceededAmount > 0) {
+        commission = exceededAmount * cashOutNaturalFeeRate;
+      } else {
+        exceededAmount;
+      }
     }
   }
-  return users;
-};
+  return roundUpToCents(commission, CONSTANTS.PERCENT_NUMBER);
+}
 
 const calculateUserCommission = (
-  item,
-  users,
+  data,
   {
     cashInFeeRate,
     cashInFeeMax,
@@ -83,70 +123,99 @@ const calculateUserCommission = (
     cashOutLegalFeeMin,
   }
 ) => {
-  const user_id = item.user_id;
-  const user_type = users[user_id].type;
-  const op_type = item.type;
-  const amount = item.operation.amount;
-  const date = parseDate(item.date);
-  const week_start = new Date(date);
-  week_start.setDate(date.getDate() - date.getDay());
-
-  const week_end = new Date(week_start);
-  week_end.setDate(week_start.getDate() + 6);
-
-  const week_cash_out = users[user_id].operations
-    .filter(
-      (item) =>
-        item.type === "cash_out" &&
-        parseDate(item.date) >= week_start &&
-        parseDate(item.date) <= week_end
-    )
-    .reduce((total, item) => total + item.operation.amount, 0);
-
-  let fee;
-  if (op_type === "cash_in") {
-    // Calculate commission fee for cash in operation
-    fee = ceil(amount * cashInFeeRate, 100);
-    if (fee > cashInFeeMax) {
-      fee = cashInFeeMax;
-    }
-  } else {
-    if (user_type === "natural") {
-      // Calculate commission fee for natural person cash out operation
-      if (amount <= casOutNaturalWeeklyLimit - week_cash_out) {
-        // No commission fee for cash out amount within weekly limit
-        fee = 0;
-      } else {
-        // Commission fee for cash out amount exceeding weekly limit
-        fee = ceil(
-          (amount - (casOutNaturalWeeklyLimit - week_cash_out)) *
-            cashOutNaturalFeeRate,
-          100
-        );
-      }
+  const totalCashOutThisWeek = {};
+  const result = [];
+  for (let item of data) {
+    let fee = 0;
+    if (item.type === "cash_in") {
+      // Calculate commission fee for cash in each item
+      fee = calculateCashInCommission({
+        amount: item.operation.amount,
+        cashInFeeRate,
+        cashInFeeMax,
+      });
     } else {
-      // Calculate commission fee for legal person cash out operation
-      fee = ceil(amount * cashOutLegalFeeRate, 100);
-      if (fee < cashOutLegalFeeMin) {
-        fee = cashOutLegalFeeMin;
+      if (item.user_type === "natural") {
+        // Calculate commission fee for natural person cash out
+        let currentTotalCashOutThisWeek = 0;
+        let isLimitOver = false;
+        if (
+          totalCashOutThisWeek[item.user_id] &&
+          totalCashOutThisWeek[item.user_id][getMonth(item.date)]
+        ) {
+          currentTotalCashOutThisWeek =
+            totalCashOutThisWeek[item.user_id][getMonth(item.date)].amount;
+
+          isLimitOver =
+            totalCashOutThisWeek[item.user_id][getMonth(item.date)].isLimitOver;
+        }
+
+        fee = calculateNaturalPersonsCashOutCommission({
+          amount: item.operation.amount,
+          totalCashOutThisWeek: currentTotalCashOutThisWeek,
+          isLimitOver,
+          casOutNaturalWeeklyLimit,
+          cashOutNaturalFeeRate,
+        });
+        // save each item cash out amount and check is mouthily limit is over or not
+        if (totalCashOutThisWeek[item.user_id]) {
+          if (totalCashOutThisWeek[item.user_id][getMonth(item.date)]) {
+            (totalCashOutThisWeek[item.user_id][
+              getMonth(item.date)
+            ].isLimitOver =
+              totalCashOutThisWeek[item.user_id][getMonth(item.date)].amount +
+                item.operation.amount -
+                casOutNaturalWeeklyLimit >=
+              0),
+              (totalCashOutThisWeek[item.user_id][getMonth(item.date)].amount =
+                totalCashOutThisWeek[item.user_id][getMonth(item.date)].amount +
+                item.operation.amount);
+          } else {
+            totalCashOutThisWeek[item.user_id][getMonth(item.date)] = {
+              amount: item.operation.amount,
+              isLimitOver: item.operation.amount - casOutNaturalWeeklyLimit > 0,
+            };
+          }
+        } else {
+          totalCashOutThisWeek[item.user_id] = {
+            [getMonth(item.date)]: {
+              amount: item.operation.amount,
+              isLimitOver: item.operation.amount - casOutNaturalWeeklyLimit > 0,
+            },
+          };
+        }
+      } else {
+        fee = calculateLegalPersonsCashOutCommission({
+          amount: item.operation.amount,
+          cashOutLegalFeeRate,
+          cashOutLegalFeeMin,
+        });
       }
     }
+    // Print calculated commission fee for the operation
+    console.log(fee);
+    result.push(fee);
   }
-
-  // Add operation to user's list of operations
-  users[user_id].operations.push(item);
-  // Print calculated commission fee for the operation
-  console.log(fee.toFixed(2));
-  return fee.toFixed(2);
+  return result;
 };
 
-function parseDate(dateStr) {
-  let parts = dateStr.split("-");
-  return new Date(parts[0], parts[1] - 1, parts[2]);
+// Helper function to round to the nearest cent
+function roundUpToCents(amount, roundNumber) {
+  return (Math.ceil(amount * roundNumber) / roundNumber).toFixed(2);
 }
+//function below to get the week number of a given date within its corresponding year
+function getMonth(date) {
+  let currentDate = new Date(date);
 
-function ceil(amount, roundNumber) {
-  return Math.ceil(amount * roundNumber) / roundNumber;
+  currentDate = new Date(
+    currentDate.toLocaleDateString("en-US", {
+      month: "2-digit",
+      day: "2-digit",
+      year: "numeric",
+    })
+  );
+
+  return new Date(currentDate).getMonth() + 1;
 }
 
 module.exports = {
